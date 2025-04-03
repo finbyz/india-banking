@@ -5,7 +5,6 @@ from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 from erpnext.accounts.doctype.payment_request.payment_request import (
 	PaymentRequest,
 	get_dummy_message,
-	get_existing_paid_amount,
 	get_gateway_details,
 )
 from erpnext.accounts.doctype.tax_withholding_category.tax_withholding_category import (
@@ -13,9 +12,34 @@ from erpnext.accounts.doctype.tax_withholding_category.tax_withholding_category 
 )
 from erpnext.accounts.party import get_party_bank_account
 from frappe import _
-from frappe.query_builder.functions import Sum
+from frappe.query_builder.functions import Abs, Sum
 from frappe.utils import flt, get_url_to_form, getdate
 
+
+def get_existing_paid_amount(doctype, name):
+	PL = frappe.qb.DocType("Payment Ledger Entry")
+	PER = frappe.qb.DocType("Payment Entry Reference")
+
+	query = (
+		frappe.qb.from_(PL)
+		.left_join(PER)
+		.on(
+			(PL.against_voucher_type == PER.reference_doctype)
+			& (PL.against_voucher_no == PER.reference_name)
+			& (PL.voucher_type == PER.parenttype)
+			& (PL.voucher_no == PER.parent)
+		)
+		.select(Abs(Sum(PL.amount)).as_("total_paid_amount"))
+		.where(PL.against_voucher_type.eq(doctype))
+		.where(PL.against_voucher_no.eq(name))
+		.where(PL.amount < 0)
+		.where(PL.delinked == 0)
+		.where(PER.docstatus == 1)
+		.where(PER.payment_request.isnull())
+	)
+	response = query.run()
+
+	return response[0][0] if response[0] else 0
 
 class BankPaymentRequest(PaymentRequest):
 	def validate(self):
